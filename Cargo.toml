@@ -1,0 +1,7 @@
+[package]
+name = "comms"
+version = "0.1.0"
+authors = ["Hiram Silvey <hiramsilvey@gmail.com>"]
+
+[dependencies]
+nanomsg = "0.6.2"
