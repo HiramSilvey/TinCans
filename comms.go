@@ -74,7 +74,7 @@ func core(backups []node, lPort string) {
 func backup(lPort string) {}
 
 func openSSH(rPort string, rHost string, bPort string, lPort string) *exec.Cmd {
-	cmd := exec.Command("ssh", "-N", "-L", bPort+":localhost:"+lPort, "-i ~/.ssh/id_rsa", "-p"+rPort, rHost)
+	cmd := exec.Command("ssh", "-N", "-L", bPort+":localhost:"+lPort, "-i ~/.ssh/id_rsa", "-p"+rPort, rHost) // port forward without opening an SSH session
 	err := cmd.Start()
 	if err != nil {
 		die("cmd.Start: %s", err.Error())
@@ -86,14 +86,14 @@ func main() {
 	usage := `Ark backup node communication.
 	
 	Usage:
-	  comms [<config.json>]`
+	  comms [<config.csv>]`
 
 	arguments, _ := docopt.ParseDoc(usage)
-	lPort := "5124"
-	if arguments["<config.json>"] == nil {
-		backup(lPort)
+	lPort := "5124" // local port
+	if arguments["<config.csv>"] == nil {
+		backup(lPort) // backup node
 	}
-	file, err := os.Open(arguments["<config.json>"].(string))
+	file, err := os.Open(arguments["<config.csv>"].(string)) // the config file for the core node
 	if err != nil {
 		die("os.Open: %s", err.Error())
 	}
@@ -103,7 +103,7 @@ func main() {
 
 	reader := csv.NewReader(file)
 	for {
-		tokens, err := reader.Read()
+		tokens, err := reader.Read() // read the line and break it into tokens (currently just reads the line FIXME)
 		if err == io.EOF {
 			break
 		} else if err != nil {
@@ -115,5 +115,5 @@ func main() {
 		n := node{port: tokens[0], host: tokens[1]}
 		backups = append(backups, n)
 	}
-	core(backups, lPort)
+	core(backups, lPort) // core node
 }
