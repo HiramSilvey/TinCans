@@ -8,8 +8,13 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 
 	docopt "github.com/docopt/docopt-go"
+	"github.com/go-mangos/mangos"
+	"github.com/go-mangos/mangos/protocol/bus"
+	"github.com/go-mangos/mangos/transport/ipc"
+	"github.com/go-mangos/mangos/transport/tcp"
 )
 
 type node struct {
@@ -22,57 +27,57 @@ func die(format string, v ...interface{}) {
 	os.Exit(1)
 }
 
-func core(backups []node) {
-	// TODO UPDATE FROM BUS TEMPLATE CODE
-	/*
-		var sock mangos.Socket
-		var err error
-		var msg []byte
-		var x int
+func core(backups []node, lPort string) {
+	var sock mangos.Socket // the socket
+	var cmds []*exec.Cmd   // the ssh commands that were started
+	var recv []byte
 
-		if sock, err = bus.NewSocket(); err != nil {
-			die("bus.NewSocket: %s", err)
-		}
-		sock.AddTransport(ipc.NewTransport())
-		sock.AddTransport(tcp.NewTransport())
-		if err = sock.Listen(args[2]); err != nil {
-			die("sock.Listen: %s", err.Error())
-		}
+	msg := []byte("hello from core")      // the test message to send from the core node to the backups
+	prefixURL := "tcp://localhost:"       // the URL prefix
+	lURL := prefixURL + lPort             // the local URL to listen on
+	bPortBase, err := strconv.Atoi(lPort) // first backup port
+	if err != nil {
+		die("strconv.Atoi: %s", err.Error())
+	}
+	bPortBase++ // start 1 higher than lPort
 
-		// wait for everyone to start listening
-		time.Sleep(time.Second)
-		for x = 3; x < len(args); x++ {
-			if err = sock.Dial(args[x]); err != nil {
-				die("socket.Dial: %s", err.Error())
-			}
-		}
+	if sock, err = bus.NewSocket(); err != nil {
+		die("bus.NewSocket: %s", err.Error())
+	}
+	sock.AddTransport(ipc.NewTransport()) // *not sure if needed*
+	sock.AddTransport(tcp.NewTransport()) // transport for TCP messages
+	if err = sock.Listen(lURL); err != nil {
+		die("sock.Listen: %s", err.Error())
+	}
 
-		// wait for everyone to join
-		time.Sleep(time.Second)
-
-		fmt.Printf("%s: SENDING '%s' ONTO BUS\n", args[1], args[1])
-		if err = sock.Send([]byte(args[1])); err != nil {
-			die("sock.Send: %s", err.Error())
+	for index, element := range backups {
+		currBPort := strconv.Itoa(bPortBase + index)                               // current backup port
+		cmds = append(cmds, openSSH(element.port, element.host, currBPort, lPort)) // open the SSH tunnel
+		if err = sock.Dial(prefixURL + currBPort); err != nil {
+			die("socket.Dial: %s", err.Error())
 		}
-		for {
-			if msg, err = sock.Recv(); err != nil {
-				die("sock.Recv: %s", err.Error())
-			}
-			fmt.Printf("%s: RECEIVED \"%s\" FROM BUS\n", args[1],
-				string(msg))
+	}
 
+	fmt.Printf("%s: SENDING '%s' ONTO BUS\n", lURL, msg)
+	if err = sock.Send(msg); err != nil {
+		die("sock.Send: %s", err.Error()) // send the message to the bus
+	}
+	for {
+		if recv, err = sock.Recv(); err != nil { // receive all messages from the bus
+			die("sock.Recv: %s", err.Error())
 		}
-	*/
+		fmt.Printf("%s: RECEIVED \"%s\" FROM BUS\n", lURL,
+			string(recv))
+	}
 }
 
-func backup() {}
+func backup(lPort string) {}
 
-func openSSH(rPort string, rHost string) *exec.Cmd {
-	cmd := exec.Command("ssh", "-N", "-L", "5124:localhost:5124", "-i ~/.ssh/id_rsa", "-p"+rPort, rHost)
+func openSSH(rPort string, rHost string, bPort string, lPort string) *exec.Cmd {
+	cmd := exec.Command("ssh", "-N", "-L", bPort+":localhost:"+lPort, "-i ~/.ssh/id_rsa", "-p"+rPort, rHost)
 	err := cmd.Start()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, fmt.Sprintf("cmd.Start: %s", err))
-		return nil
+		die("cmd.Start: %s", err.Error())
 	}
 	return cmd
 }
@@ -84,12 +89,13 @@ func main() {
 	  comms [<config.json>]`
 
 	arguments, _ := docopt.ParseDoc(usage)
+	lPort := "5124"
 	if arguments["<config.json>"] == nil {
-		backup()
+		backup(lPort)
 	}
 	file, err := os.Open(arguments["<config.json>"].(string))
 	if err != nil {
-		die("os.Open: %s", err)
+		die("os.Open: %s", err.Error())
 	}
 	defer file.Close()
 
@@ -101,7 +107,7 @@ func main() {
 		if err == io.EOF {
 			break
 		} else if err != nil {
-			die("reader.Read: %s", err)
+			die("reader.Read: %s", err.Error())
 		}
 		if len(tokens) != 2 {
 			die("reader.Read: result not of length 2")
@@ -109,5 +115,5 @@ func main() {
 		n := node{port: tokens[0], host: tokens[1]}
 		backups = append(backups, n)
 	}
-	core(backups)
+	core(backups, lPort)
 }
