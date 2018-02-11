@@ -103,7 +103,7 @@ func main() {
 
 	reader := csv.NewReader(file)
 	for {
-		tokens, err := reader.Read() // read the line and break it into tokens (currently just reads the line FIXME)
+		tokens, err := reader.Read() // read the line and break it into tokens using the comma delim
 		if err == io.EOF {
 			break
 		} else if err != nil {
