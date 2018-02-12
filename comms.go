@@ -30,6 +30,7 @@ func die(format string, v ...interface{}) {
 func core(backups []node, lPort string) {
 	var sock mangos.Socket // the socket
 	var cmds []*exec.Cmd   // the ssh commands that were started
+	var err error          // catch errors
 	var recv []byte
 
 	msg := []byte("hello from core")      // the test message to send from the core node to the backups
@@ -58,20 +59,53 @@ func core(backups []node, lPort string) {
 		}
 	}
 
-	fmt.Printf("%s: SENDING '%s' ONTO BUS\n", lURL, msg)
-	if err = sock.Send(msg); err != nil {
-		die("sock.Send: %s", err.Error()) // send the message to the bus
-	}
 	for {
-		if recv, err = sock.Recv(); err != nil { // receive all messages from the bus
-			die("sock.Recv: %s", err.Error())
+		fmt.Printf("%s: SENDING '%s' ONTO BUS\n", lURL, msg)
+		if err = sock.Send(msg); err != nil { // send the message to the bus
+			die("sock.Send: %s", err.Error())
 		}
-		fmt.Printf("%s: RECEIVED \"%s\" FROM BUS\n", lURL,
-			string(recv))
+		for {
+			if recv, err = sock.Recv(); err != nil { // receive all messages from the bus
+				die("sock.Recv: %s", err.Error())
+			}
+			fmt.Printf("%s: RECEIVED \"%s\" FROM BUS\n", lURL,
+				string(recv))
+		}
 	}
 }
 
-func backup(lPort string) {}
+func backup(lPort string) {
+	var sock mangos.Socket // the socket
+	var err error          // catch errors
+	var recv []byte
+
+	msg := []byte("hello from backup") // the test message to send from the backup to the core
+	lURL := "tcp://localhost:" + lPort // the local URL to talk on
+
+	if sock, err = bus.NewSocket(); err != nil {
+		die("bus.NewSocket: %s", err.Error())
+	}
+
+	sock.AddTransport(ipc.NewTransport()) // *not sure if needed*
+	sock.AddTransport(tcp.NewTransport()) // transport for TCP messages
+	if err = sock.Listen(lURL); err != nil {
+		die("sock.Listen: %s", err.Error())
+	}
+	if err = sock.Dial(lURL); err != nil {
+		die("socket.Dial: %s", err.Error())
+	}
+
+	for {
+		if recv, err = sock.Recv(); err != nil { // receive a message from the bus
+			die("sock.Recv: %s", err.Error())
+		}
+		fmt.Printf("%s: RECEIVED \"%s\" FROM BUS\n", lURL, string(recv))
+		fmt.Printf("%s: SENDING '%s' ONTO BUS\n", lURL, msg)
+		if err = sock.Send(msg); err != nil { // send the message to the bus
+			die("sock.Send: %s", err.Error())
+		}
+	}
+}
 
 func openSSH(rPort string, rHost string, bPort string, lPort string) *exec.Cmd {
 	cmd := exec.Command("ssh", "-N", "-L", bPort+":localhost:"+lPort, "-i ~/.ssh/id_rsa", "-p"+rPort, rHost) // port forward without opening an SSH session
