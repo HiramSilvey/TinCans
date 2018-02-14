@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"time"
 
 	docopt "github.com/docopt/docopt-go"
 	"github.com/go-mangos/mangos"
-	"github.com/go-mangos/mangos/protocol/bus"
+	"github.com/go-mangos/mangos/protocol/rep"
+	"github.com/go-mangos/mangos/protocol/req"
 	"github.com/go-mangos/mangos/transport/ipc"
 	"github.com/go-mangos/mangos/transport/tcp"
 )
@@ -28,48 +30,47 @@ func die(format string, v ...interface{}) {
 }
 
 func core(backups []node, lPort string) {
-	var sock mangos.Socket // the socket
-	var cmds []*exec.Cmd   // the ssh commands that were started
-	var err error          // catch errors
-	var recv []byte
+	var sock mangos.Socket             // the socket
+	var err error                      // catch errors
+	var recv []byte                    // the received bytes
+	cmds := make(map[string]*exec.Cmd) // the ssh commands that were started
 
 	msg := []byte("hello from core")      // the test message to send from the core node to the backups
 	prefixURL := "tcp://localhost:"       // the URL prefix
-	lURL := prefixURL + lPort             // the local URL to listen on
 	bPortBase, err := strconv.Atoi(lPort) // first backup port
 	if err != nil {
 		die("strconv.Atoi: %s", err.Error())
 	}
-	bPortBase++ // start 1 higher than lPort
 
-	if sock, err = bus.NewSocket(); err != nil {
-		die("bus.NewSocket: %s", err.Error())
+	if sock, err = req.NewSocket(); err != nil {
+		die("req.NewSocket: %s", err.Error())
 	}
-	sock.AddTransport(ipc.NewTransport()) // *not sure if needed*
-	sock.AddTransport(tcp.NewTransport()) // transport for TCP messages
-	if err = sock.Listen(lURL); err != nil {
-		die("sock.Listen: %s", err.Error())
-	}
+	sock.AddTransport(ipc.NewTransport())
+	sock.AddTransport(tcp.NewTransport())
 
 	for index, element := range backups {
-		currBPort := strconv.Itoa(bPortBase + index)                               // current backup port
-		cmds = append(cmds, openSSH(element.port, element.host, currBPort, lPort)) // open the SSH tunnel
-		if err = sock.Dial(prefixURL + currBPort); err != nil {
-			die("socket.Dial: %s", err.Error())
-		}
+		currBPort := strconv.Itoa(bPortBase + index)                            // current backup port
+		cmds[currBPort] = openSSH(element.port, element.host, currBPort, lPort) // open the SSH tunnel
 	}
-
 	for {
-		fmt.Printf("%s: SENDING '%s' ONTO BUS\n", lURL, msg)
-		if err = sock.Send(msg); err != nil { // send the message to the bus
-			die("sock.Send: %s", err.Error())
-		}
-		for {
-			if recv, err = sock.Recv(); err != nil { // receive all messages from the bus
-				die("sock.Recv: %s", err.Error())
+		for currBPort := range cmds {
+			if err = sock.Dial(prefixURL + currBPort); err != nil {
+				die("socket.Dial: %s", err.Error())
 			}
-			fmt.Printf("%s: RECEIVED \"%s\" FROM BUS\n", lURL,
-				string(recv))
+			time.Sleep(3 * time.Second) // wait for the dial to complete
+
+			for { // for now, just do it indefinitely
+				// eventually, if the wrong reply is received (or no reply) move onto next backup
+				fmt.Printf("SENDING REQUEST %s\n", string(msg))
+				if err = sock.Send(msg); err != nil { // send message to the backup
+					die("sock.Send: %s", err.Error())
+				}
+				if recv, err = sock.Recv(); err != nil {
+					die("sock.Recv: %s", err.Error())
+				}
+				fmt.Printf("RECEIVED REPLY %s\n", string(recv))
+				time.Sleep(3 * time.Second)
+			}
 		}
 	}
 }
@@ -82,27 +83,24 @@ func backup(lPort string) {
 	msg := []byte("hello from backup") // the test message to send from the backup to the core
 	lURL := "tcp://localhost:" + lPort // the local URL to talk on
 
-	if sock, err = bus.NewSocket(); err != nil {
-		die("bus.NewSocket: %s", err.Error())
+	if sock, err = rep.NewSocket(); err != nil {
+		die("rep.NewSocket: %s", err)
 	}
-
-	sock.AddTransport(ipc.NewTransport()) // *not sure if needed*
-	sock.AddTransport(tcp.NewTransport()) // transport for TCP messages
+	sock.AddTransport(ipc.NewTransport())
+	sock.AddTransport(tcp.NewTransport())
 	if err = sock.Listen(lURL); err != nil {
 		die("sock.Listen: %s", err.Error())
 	}
-	if err = sock.Dial(lURL); err != nil {
-		die("socket.Dial: %s", err.Error())
-	}
-
 	for {
-		if recv, err = sock.Recv(); err != nil { // receive a message from the bus
+		recv, err = sock.Recv()
+		if err != nil {
 			die("sock.Recv: %s", err.Error())
 		}
-		fmt.Printf("%s: RECEIVED \"%s\" FROM BUS\n", lURL, string(recv))
-		fmt.Printf("%s: SENDING '%s' ONTO BUS\n", lURL, msg)
-		if err = sock.Send(msg); err != nil { // send the message to the bus
-			die("sock.Send: %s", err.Error())
+		fmt.Printf("RECEIVED REQUEST %s\n", string(recv))
+		fmt.Printf("SENDING REPLY %s\n", string(msg))
+		err = sock.Send(msg)
+		if err != nil {
+			die("can't send reply: %s", err.Error())
 		}
 	}
 }
